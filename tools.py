@@ -832,7 +832,7 @@ def _populate_vector_db():
     """
     Populate vector database with feedback embeddings.
     Uses smart caching: checks cache first to avoid recomputing embeddings.
-    Only adds NEW entries (checks Vector DB for duplicates before adding).
+    Only adds NEW entries (checks Vector DB for duplicates by text hash).
     """
     global feedback_df, _vector_collection
     
@@ -860,49 +860,50 @@ def _populate_vector_db():
             level_col = col
             break
     
-    # Check existing entries in Vector DB
+    # Get all existing text hashes from Vector DB in one batch query (FAST)
+    existing_hashes = set()
     existing_count = _vector_collection.count()
     
-    if existing_count == 0:
-        # Empty DB - populate all entries
-        print(f"Populating vector database with {total_feedback} feedback entries...")
-        print(f"   Using smart caching to avoid recomputing embeddings...")
-        _add_entries_to_vector_db(non_empty, text_col, level_col, timestamp_col, batch_size=100)
-        print(f"Vector database populated with {total_feedback} entries")
-    elif existing_count != total_feedback:
-        # Count mismatch - only add new entries (check for duplicates)
-        print(f"Updating vector database ({existing_count} existing, {total_feedback} total)...")
-        print(f"   Checking for new entries and using smart caching...")
-        
-        # Get existing IDs from Vector DB
-        existing_ids = set()
+    if existing_count > 0:
         try:
-            existing_results = _vector_collection.get(limit=existing_count)
-            if existing_results and existing_results.get('ids'):
-                existing_ids = set(existing_results['ids'])
+            # Get all existing entries with their metadata (one query)
+            existing_results = _vector_collection.get(limit=existing_count, include=['metadatas'])
+            if existing_results and existing_results.get('metadatas'):
+                for metadata in existing_results['metadatas']:
+                    if metadata and 'text_hash' in metadata:
+                        existing_hashes.add(metadata['text_hash'])
         except:
             pass
+    
+    # Find new entries by checking text hash (fast in-memory lookup)
+    new_entries = []
+    new_indices = []
+    
+    for idx, row in non_empty.iterrows():
+        text = str(row[text_col])
+        text_hash = _hash_text(text, normalized=True)
         
-        # Find new entries (not in Vector DB)
-        new_entries = []
-        new_indices = []
-        for idx in range(len(non_empty)):
-            entry_id = f"feedback_{idx}"
-            if entry_id not in existing_ids:
-                new_entries.append(non_empty.iloc[idx])
-                new_indices.append(idx)
-        
-        if new_entries:
-            new_df = pd.DataFrame(new_entries).reset_index(drop=True)
-            print(f"   Found {len(new_entries)} new entries to add...")
-            _add_entries_to_vector_db(new_df, text_col, level_col, timestamp_col, 
-                                     start_index=min(new_indices) if new_indices else 0, 
-                                     batch_size=100)
-            print(f"Added {len(new_entries)} new entries to vector database")
-        else:
-            print(f"No new entries to add (all entries already indexed)")
-    else:
+        # Fast in-memory set lookup (O(1))
+        if text_hash not in existing_hashes:
+            new_entries.append(row)
+            new_indices.append(idx)
+    
+    if len(new_entries) == 0:
         print(f"Vector database already up to date ({existing_count} entries)")
+    elif existing_count == 0:
+        # Empty DB - populate all entries
+        print(f"Populating vector database with {total_feedback} feedback entries...")
+        _add_entries_to_vector_db(non_empty, text_col, level_col, timestamp_col, batch_size=100)
+        print(f"Vector database populated with {total_feedback} entries")
+    else:
+        # Some entries exist, add only new ones
+        print(f"Updating vector database ({existing_count} existing, {total_feedback} total)...")
+        print(f"   Found {len(new_entries)} new entries to add...")
+        new_df = pd.DataFrame(new_entries).reset_index(drop=True)
+        _add_entries_to_vector_db(new_df, text_col, level_col, timestamp_col, 
+                                 start_index=min(new_indices) if new_indices else 0, 
+                                 batch_size=100)
+        print(f"Added {len(new_entries)} new entries to vector database")
 
 def _add_entries_to_vector_db(non_empty: pd.DataFrame, text_col: str, level_col: Optional[str], 
                               timestamp_col: Optional[str], start_index: int = 0, batch_size: int = 100):
@@ -936,7 +937,8 @@ def _add_entries_to_vector_db(non_empty: pd.DataFrame, text_col: str, level_col:
         metadatas = []
         for j, idx in enumerate(batch_df_indices):
             text = batch_texts[j]
-            text_hash = _hash_text(text)
+            # Use normalized hash to match _populate_vector_db() checking logic
+            text_hash = _hash_text(text, normalized=True)
             metadata = {
                 "text": text[:500],  # Store first 500 chars
                 "text_hash": text_hash  # Store hash for efficient lookups

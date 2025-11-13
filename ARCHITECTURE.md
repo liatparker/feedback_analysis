@@ -90,11 +90,13 @@
 │  initialize_tools(feedback_df)                                              │
 │  ├─ Load Embedding Model (SentenceTransformer)                             │
 │  ├─ _populate_vector_db()                                                  │
-│  │   ├─ Check existing entries                                             │
+│  │   ├─ Get all existing text hashes (one batch query)                    │
+│  │   ├─ Store in Python set for fast lookups                               │
 │  │   ├─ For each entry:                                                    │
-│  │   │   ├─ _generate_embeddings() [with caching]                         │
-│  │   │   ├─ Check if in Vector DB                                          │
-│  │   │   └─ Add if new (with metadata)                                     │
+│  │   │   ├─ Generate normalized text hash                                  │
+│  │   │   ├─ Check if hash in existing_hashes set (O(1) lookup)            │
+│  │   │   ├─ If new: _generate_embeddings() [with caching]                  │
+│  │   │   └─ Add to Vector DB (batch: 100 entries)                          │
 │  │   └─ Vector DB ready                                                    │
 │  └─ _store_to_historical_db()                                              │
 │      ├─ For each entry:                                                    │

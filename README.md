@@ -124,8 +124,10 @@ Agent: Retrieves historical data for both periods, compares statistics
 
 **Vector DB** (`.chroma_db/`)
 - Stores embeddings for semantic search
-- Updated only when new entries detected
-- Uses smart caching to avoid recomputing embeddings
+- Hash-based duplicate detection: checks text content (not just count)
+- Fast batch processing: one query to get all existing hashes, then in-memory lookups
+- Uses smart caching (Level 1 + Level 2) to avoid recomputing embeddings
+- Batch processing: adds entries in batches of 100 for efficiency
 
 **Historical DB** (`.historical_db/`)
 - Stores complete feedback data for trend analysis

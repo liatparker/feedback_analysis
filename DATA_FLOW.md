@@ -23,11 +23,13 @@ initialize_tools(dataframe)
   ↓
 ├─ SHORT-TERM MEMORY: Populate Vector DB
 │   └─ _populate_vector_db()
-│       ├─ Check existing entries in Vector DB
+│       ├─ Get all existing text hashes from Vector DB (one batch query)
+│       ├─ Store hashes in Python set for fast lookups
 │       ├─ For each feedback entry:
-│       │   ├─ Generate embedding (with caching)
-│       │   ├─ Check if already in Vector DB
-│       │   └─ Add if new (with metadata: text, level, timestamp)
+│       │   ├─ Generate normalized text hash
+│       │   ├─ Check if hash exists (fast in-memory lookup)
+│       │   ├─ If new: Generate embedding (with caching: Level 1 + Level 2)
+│       │   └─ Add to Vector DB if new (batch: 100 entries at a time)
 │       └─ Vector DB ready for semantic search
   ↓
 └─ LONG-TERM MEMORY: Store to Historical DB
@@ -159,22 +161,29 @@ Return embeddings
 ### New Entry Detection
 
 ```
-New CSV loaded with additional entries
+New CSV loaded (or existing CSV reloaded)
   ↓
 _populate_vector_db()
   ↓
-Check existing count in Vector DB
-  ├─ If count matches: Skip (no new entries)
-  └─ If count differs: Process new entries
-      ↓
-      For each entry:
-      ├─ Check if ID exists in Vector DB
-      ├─ If exists: Skip (duplicate)
-      └─ If new:
-          ├─ Generate embedding (with caching)
-          ├─ Prepare metadata (text, level, timestamp)
-          └─ Add to Vector DB
+Get all existing text hashes from Vector DB (one batch query)
+  └─ Store in Python set for fast O(1) lookups
+  ↓
+For each feedback entry:
+  ├─ Generate normalized text hash
+  ├─ Check if hash exists in existing_hashes set (fast in-memory lookup)
+  ├─ If exists: Skip (duplicate, already indexed)
+  └─ If new:
+      ├─ Generate embedding (with caching: Level 1 + Level 2)
+      ├─ Prepare metadata (text, level, timestamp, text_hash)
+      └─ Add to Vector DB (batch processing: 100 entries at a time)
 ```
+
+**Key Optimizations:**
+- One batch query to get all existing hashes (not per-entry queries)
+- Fast in-memory set lookups (O(1) complexity)
+- Hash-based duplicate detection (checks actual text content, not just count)
+- Batch processing for adding new entries (100 at a time)
+- Automatic caching prevents regenerating embeddings
 
 ## Historical DB Update Flow
 

@@ -1,0 +1,23 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Machine Learning & NLP
+scikit-learn>=1.3.0
+sentence-transformers>=2.2.0
+
+# Vector Database for Semantic Search
+chromadb>=0.4.0
+
+# LangChain (for agent-based processing)
+# Using 0.3.20+ for native create_tool_calling_agent support
+langchain>=0.3.20,<1.0.0
+langchain-community>=0.0.10
+langchain-openai>=0.0.5  # Optional: Only needed if using OpenAI provider
+langchain-anthropic>=0.1.0
+langchain-core>=0.1.0
+
+# Environment & Config
+python-dotenv>=1.0.0
+
+# Note: sqlite3 is built-in to Python, no need to install

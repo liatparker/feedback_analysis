@@ -70,6 +70,22 @@ AUTO_PROCESS = True  # If True, runs automatically. If False, prompts user
 system_prompt = """
 You are a Feedback Analysis Assistant. Your role is to help analyze and answer questions about feedback data.
 
+**ERROR HANDLING AND CLARIFICATION:**
+- If a user's question is unclear, ambiguous, or you're not sure what they're asking:
+  * Politely ask for clarification
+  * Suggest specific examples of what they might be looking for
+  * Offer to help them explore the data
+  * Never show technical errors - always respond in a friendly, helpful way
+- If you encounter an error or can't find the requested information:
+  * Apologize briefly
+  * Ask what specific information they need
+  * Suggest alternative ways to phrase their question
+  * Offer to show available data or columns if relevant
+- Examples of helpful clarification requests:
+  * "I'd be happy to help! Could you clarify what you mean by [term]?"
+  * "I want to make sure I understand correctly. Are you asking about [interpretation]?"
+  * "I can help with that! Would you like to see [specific option 1] or [specific option 2]?"
+
 **DATA STRUCTURE:**
 The feedback data is loaded from a CSV file. The PRIMARY focus is on:
 - **Level (numeric)**: A ranking/rating column that provides numeric feedback levels (e.g., 1-5, 1-10, etc.)
@@ -283,7 +299,7 @@ When analyzing text feedback, work with BOTH positive feedback (high levels like
 - **When user asks about other columns** (feedback giver, ID, category, etc.):
   - Use `get_feedback_statistics` to see available columns and their values
   - Use `generate_dataframe_report` with filter_criteria to filter by those columns
-  - Example: {"FeedbackGiver": "John Doe"} or {"Category": ["A", "B"]}
+  - Example: {{"FeedbackGiver": "John Doe"}} or {{"Category": ["A", "B"]}}
 - Provide specific examples from the data when relevant
 - Explain your findings clearly and concisely
 - If asked about specific levels or text content, use the filtering tools
@@ -304,6 +320,36 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
     MessagesPlaceholder(variable_name="agent_scratchpad")
 ])
+
+def handle_agent_error(error: Exception, user_query: str) -> str:
+    """
+    Handle agent errors gracefully by asking for clarification.
+    Returns a user-friendly error message.
+    """
+    error_str = str(error).lower()
+    
+    # Template variable errors
+    if "missing variables" in error_str or "invalid_prompt_input" in error_str:
+        return "I apologize, but I'm having trouble understanding your question. Could you please rephrase it or provide more details about what you'd like to know?"
+    
+    # Parsing errors
+    if "parsing" in error_str or "parse" in error_str:
+        return "I'm having difficulty understanding your question. Could you please clarify what you're looking for? For example, you could ask about:\n- Common complaints or issues\n- Feedback statistics\n- Trends over time\n- Specific feedback levels"
+    
+    # Tool/function errors
+    if "tool" in error_str or "function" in error_str:
+        return "I encountered an issue processing your request. Could you please try rephrasing your question? If you're asking about specific data, please make sure to include relevant details like dates, levels, or categories."
+    
+    # Data/column errors
+    if "column" in error_str or "data" in error_str or "not found" in error_str:
+        return "I couldn't find the information you're looking for. Could you please clarify:\n- What specific data are you interested in?\n- Are you asking about a particular column or category?\n- Would you like to see what columns are available in the data?"
+    
+    # Date/time errors
+    if "date" in error_str or "time" in error_str or "timestamp" in error_str:
+        return "I'm having trouble with the date or time information. Could you please:\n- Specify dates in YYYY-MM-DD format (e.g., 2024-01-15)\n- Clarify the time period you're interested in\n- Or ask about trends without specific dates if you prefer"
+    
+    # Generic error - ask for clarification
+    return "I apologize, but I'm having trouble understanding your question. Could you please:\n- Rephrase your question\n- Provide more specific details\n- Or try asking about:\n  * Common complaints or issues\n  * Feedback statistics\n  * Trends over time\n  * Specific feedback levels\n\nI'm here to help once I understand what you need!"
 
 # Initialize LLM based on provider
 if LLM_PROVIDER == "anthropic":
@@ -349,11 +395,17 @@ tools = [
 
 
 agent = create_tool_calling_agent(llm, tools, prompt)
+
+# Custom error handler for parsing errors
+def parsing_error_handler(error: Exception) -> str:
+    """Handle parsing errors by asking for clarification."""
+    return handle_agent_error(error, "")
+
 agent_executor = AgentExecutor(
     agent=agent, 
     tools=tools, 
     verbose=VERBOSE, 
-    handle_parsing_errors=True,
+    handle_parsing_errors=parsing_error_handler,
     max_iterations=15,  # Prevent infinite loops
     max_execution_time=300  # 5 minute timeout
 )
@@ -440,8 +492,14 @@ def main():
             print("\n\n👋 Goodbye! Thank you for using the Feedback Analysis Assistant.")
             break
         except Exception as e:
-            print(f"\n❌ Error: {e}\n")
+            # Handle errors gracefully with user-friendly messages
+            error_message = handle_agent_error(e, user_query)
+            print(f"\n{error_message}\n")
             print("-" * 60 + "\n")
+            
+            # Still update chat history with the error message so context is maintained
+            chat_history.append(("human", user_query))
+            chat_history.append(("ai", error_message))
 
 if __name__ == "__main__":
     main()

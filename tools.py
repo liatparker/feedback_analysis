@@ -400,6 +400,31 @@ def _find_similar_query_in_rag_cache(query_embedding: np.ndarray, threshold: flo
     
     return None
 
+def _format_text_for_display(text: str, max_length: int = None) -> str:
+    """
+    Format text for display, preserving original language direction.
+    Does not force RTL/LTR - displays text in its natural language direction.
+    
+    Args:
+        text: Text to format
+        max_length: Maximum length (truncate if longer)
+    
+    Returns:
+        Formatted text (truncated if needed, but preserving natural direction)
+    """
+    if not text or pd.isna(text):
+        return ""
+    
+    text_str = str(text)
+    
+    # Truncate if needed
+    if max_length and len(text_str) > max_length:
+        text_str = text_str[:max_length] + "..."
+    
+    # Return text as-is, preserving its natural language direction
+    # The terminal/console will handle RTL/LTR automatically based on the text content
+    return text_str
+
 def _get_text_column(df: pd.DataFrame) -> str:
     """
     Get the text column name from the dataframe.
@@ -1233,12 +1258,17 @@ def get_feedback_by_level(level: int) -> str:
             return f"No feedback entries found with level {level}"
         
         result = f"Found {len(filtered)} feedback entries with level {level}:\n\n"
+        # Format text column for RTL display
+        text_col = _get_text_column(filtered)
+        display_df = filtered.copy()
+        if text_col and text_col in display_df.columns:
+            display_df[text_col] = display_df[text_col].apply(lambda x: _format_text_for_display(x) if pd.notna(x) else "")
         # Show limited rows to avoid overwhelming output
-        if len(filtered) > 10:
-            result += filtered.head(10).to_string()
-            result += f"\n\n... and {len(filtered) - 10} more entries (showing first 10)"
+        if len(display_df) > 10:
+            result += display_df.head(10).to_string()
+            result += f"\n\n... and {len(display_df) - 10} more entries (showing first 10)"
         else:
-            result += filtered.to_string()
+            result += display_df.to_string()
         return result
     except Exception as e:
         return f"Error filtering by level: {str(e)}"
@@ -1409,14 +1439,22 @@ def analyze_feedback_themes(
                 display_cols = [text_col] + ([level_col] if level_col else [])
                 sample_size = min(5, len(cluster_data))
                 result += f"Sample entries:\n"
-                result += cluster_data.head(sample_size)[display_cols].to_string()
+                # Format text column for RTL display
+                cluster_display = cluster_data.head(sample_size)[display_cols].copy()
+                if text_col in cluster_display.columns:
+                    cluster_display[text_col] = cluster_display[text_col].apply(lambda x: _format_text_for_display(x) if pd.notna(x) else "")
+                result += cluster_display.to_string()
                 result += f"\n\n"
             
             if noise_count > 0:
                 result += f"--- Noise/Outliers ({noise_count} entries not in any cluster) ---\n"
                 noise_sample = non_empty[non_empty['cluster'] == -1].head(3)
                 if len(noise_sample) > 0:
-                    result += noise_sample[[text_col] + ([level_col] if level_col else [])].to_string()
+                    # Format text column for RTL display
+                    noise_display = noise_sample[[text_col] + ([level_col] if level_col else [])].copy()
+                    if text_col in noise_display.columns:
+                        noise_display[text_col] = noise_display[text_col].apply(lambda x: _format_text_for_display(x) if pd.notna(x) else "")
+                    result += noise_display.to_string()
                     result += f"\n\n"
             
             result += f"\n⚠️ INSTRUCTIONS FOR LLM:\n"
@@ -1457,7 +1495,11 @@ def analyze_feedback_themes(
             
             result += f"\nSample feedback entries for analysis:\n"
             display_cols = [text_col] + ([level_col] if level_col else [])
-            result += non_empty.head(30)[display_cols].to_string()
+            # Format text column for RTL display
+            display_df = non_empty.head(30)[display_cols].copy()
+            if text_col in display_df.columns:
+                display_df[text_col] = display_df[text_col].apply(lambda x: _format_text_for_display(x) if pd.notna(x) else "")
+            result += display_df.to_string()
             
             if len(non_empty) > 30:
                 result += f"\n\n... and {len(non_empty) - 30} more entries\n"
@@ -1911,7 +1953,7 @@ def semantic_search_feedback(
             result += f"Reference entry (index {reference_idx}):\n"
             if level_col:
                 result += f"  Level: {non_empty.iloc[reference_idx][level_col]}\n"
-            result += f"  Text: {reference_text_used[:300]}{'...' if len(str(reference_text_used)) > 300 else ''}\n\n"
+            result += f"  Text: {_format_text_for_display(reference_text_used, max_length=300)}\n\n"
             result += f"Searching for: entries similar to reference\n"
         else:
             result += f"Query: '{query}'\n"
@@ -1929,7 +1971,7 @@ def semantic_search_feedback(
             result += f"Result {idx} (Similarity: {doc.metadata.get('similarity', 0):.3f}):\n"
             if 'level' in doc.metadata:
                 result += f"  Level: {doc.metadata['level']}\n"
-            result += f"  Text: {doc.page_content[:200]}{'...' if len(doc.page_content) > 200 else ''}\n\n"
+            result += f"  Text: {_format_text_for_display(doc.page_content, max_length=200)}\n\n"
         
         result += f"\n⚠️ INSTRUCTIONS FOR LLM:\n"
         result += f"Analyze these semantically similar feedback entries to:\n"
@@ -2018,7 +2060,11 @@ def get_historical_feedback(start_date: str = None, end_date: str = None,
             display_cols = [text_col] + ([level_col] if level_col else [])
             if timestamp_col and timestamp_col in historical_df.columns:
                 display_cols.append(timestamp_col)
-            result += historical_df.head(5)[display_cols].to_string()
+            # Format text column for RTL display
+            display_df = historical_df.head(5)[display_cols].copy()
+            if text_col in display_df.columns:
+                display_df[text_col] = display_df[text_col].apply(lambda x: _format_text_for_display(x) if pd.notna(x) else "")
+            result += display_df.to_string()
             result += f"\n\n"
         
         result += f"⚠️ INSTRUCTIONS FOR LLM:\n"
@@ -2277,9 +2323,16 @@ def compare_feedback_periods(period1_start: str, period1_end: str,
         result += f"- Use semantic search or theme analysis to understand WHAT changed\n"
         result += f"- Provide actionable insights on trends\n"
         result += f"\nSample Period 1 feedback (first 10 entries):\n"
-        result += period1_df.head(10)[[text_col] + ([level_col] if level_col else [])].to_string()
+        # Format text column for RTL display
+        period1_display = period1_df.head(10)[[text_col] + ([level_col] if level_col else [])].copy()
+        if text_col in period1_display.columns:
+            period1_display[text_col] = period1_display[text_col].apply(lambda x: _format_text_for_display(x) if pd.notna(x) else "")
+        result += period1_display.to_string()
         result += f"\n\nSample Period 2 feedback (first 10 entries):\n"
-        result += period2_df.head(10)[[text_col] + ([level_col] if level_col else [])].to_string()
+        period2_display = period2_df.head(10)[[text_col] + ([level_col] if level_col else [])].copy()
+        if text_col in period2_display.columns:
+            period2_display[text_col] = period2_display[text_col].apply(lambda x: _format_text_for_display(x) if pd.notna(x) else "")
+        result += period2_display.to_string()
         
         return result
     except Exception as e:

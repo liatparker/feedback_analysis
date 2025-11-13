@@ -26,7 +26,7 @@ load_dotenv()
 # Check for required API keys
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 if not ANTHROPIC_API_KEY:
-    print("❌ Error: ANTHROPIC_API_KEY not found in environment variables.")
+    print("Error: ANTHROPIC_API_KEY not found in environment variables.")
     print("   Please set it in your .env file or as an environment variable.")
     print("   Example: ANTHROPIC_API_KEY=your_key_here")
     print("\n   You can get your API key from: https://console.anthropic.com/")
@@ -359,7 +359,7 @@ if LLM_PROVIDER == "anthropic":
         )
     except Exception as e:
         if "404" in str(e) or "not_found" in str(e).lower():
-            print(f"\n❌ Error: Model '{LLM_MODEL}' not found.")
+            print(f"\nError: Model '{LLM_MODEL}' not found.")
             print("   This could mean:")
             print("   1. The model name is incorrect")
             print("   2. Your API account doesn't have access to this model")
@@ -411,7 +411,7 @@ agent_executor = AgentExecutor(
 def show_suggested_questions():
     """Display suggested questions to help users get started"""
     print("\n" + "="*60)
-    print("💡 SUGGESTED QUESTIONS")
+    print("SUGGESTED QUESTIONS")
     print("="*60 + "\n")
     
     suggested_questions = [
@@ -433,11 +433,11 @@ def show_suggested_questions():
 def main():
     """Main function to run the feedback analysis agent interactively"""
     print("\n" + "="*60)
-    print("📊 FEEDBACK ANALYSIS ASSISTANT")
+    print("FEEDBACK ANALYSIS ASSISTANT")
     print("="*60)
-    print(f"\n📁 Input file:  {INPUT_FILE}")
-    print(f"📊 Total entries: {len(feedback_df)}")
-    print(f"🤖 LLM Model:   {LLM_MODEL} ({LLM_PROVIDER})")
+    print(f"\nInput file:  {INPUT_FILE}")
+    print(f"Total entries: {len(feedback_df)}")
+    print(f"LLM Model:   {LLM_MODEL} ({LLM_PROVIDER})")
     print("="*60)
     
     # Show suggested questions to help users get started
@@ -451,7 +451,7 @@ def main():
             user_query = input("You: ").strip()
             
             if user_query.lower() in ['exit', 'quit', 'q']:
-                print("\n👋 Goodbye! Thank you for using the Feedback Analysis Assistant.")
+                print("\nGoodbye! Thank you for using the Feedback Analysis Assistant.")
                 break
             
             if not user_query:

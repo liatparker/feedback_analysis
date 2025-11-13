@@ -90,12 +90,15 @@
 │  initialize_tools(feedback_df)                                              │
 │  ├─ Load Embedding Model (SentenceTransformer)                             │
 │  ├─ _populate_vector_db()                                                  │
-│  │   ├─ Check existing entries                                             │
 │  │   ├─ For each entry:                                                    │
-│  │   │   ├─ _generate_embeddings() [with caching]                         │
-│  │   │   ├─ Check if in Vector DB                                          │
-│  │   │   └─ Add if new (with metadata)                                     │
+│  │   │   ├─ (1) Hash check → already indexed? Skip embedding & indexing  │
+│  │   │   ├─ (2) Check embedding cache → reuse if found                    │
+│  │   │   ├─ (3) Generate embedding if not in cache                        │
+│  │   │   ├─ (4) Check vector DB → already indexed? Skip reinsert          │
+│  │   │   ├─ (5) Store in vector DB if new (with metadata)                  │
+│  │   │   └─ (6) Cache the embedding for reuse                             │
 │  │   └─ Vector DB ready                                                    │
+│  │   Note: All entries remain in feedback_df for analysis                  │
 │  └─ _store_to_historical_db()                                              │
 │      ├─ For each entry:                                                    │
 │      │   ├─ Generate text hash                                             │
@@ -135,9 +138,10 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    EMBEDDING GENERATION PIPELINE                             │
+│              (For Vector DB Population - New Document Flow)                   │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-Input: Text String
+New Document Entry
     │
     ▼
 ┌─────────────────────────────────┐
@@ -155,39 +159,62 @@ Input: Text String
               │
               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  LEVEL 1: Hash Cache Check                                      │
+│  STEP 1: Hash Check (Vector DB)                                 │
+│  └─ Check if text_hash exists in Vector DB                     │
+│      ├─ HIT: Skip embedding generation & indexing             │
+│      │   └─ Entry remains in feedback_df for analysis         │
+│      └─ MISS: Continue to embedding generation                │
+└─────────────┬───────────────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 2: Check Embedding Cache (Level 1: Hash Cache)            │
 │  └─ Key: text_{hash}                                            │
-│      ├─ HIT: Return cached embedding (instant)                 │
+│      ├─ HIT: Return cached embedding (instant)                  │
 │      └─ MISS: Continue                                         │
 └─────────────┬───────────────────────────────────────────────────┘
               │
               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  LEVEL 2: Semantic Cache Check                                  │
-│  └─ Check for exact normalized text match                      │
-│      ├─ HIT: Return cached embedding                            │
-│      └─ MISS: Generate embedding                               │
-│          └─ model.encode([text])                               │
-│              └─ Compare with cached embeddings (cosine > 0.95) │
-│                  ├─ SIMILAR: Use cached                        │
-│                  └─ NOT SIMILAR: Use generated                │
+│  STEP 3: Generate Embedding (if not in cache)                  │
+│  └─ _generate_embeddings()                                     │
+│      ├─ Check Level 2: Semantic Cache                           │
+│      │   └─ Check for exact normalized text match             │
+│      │       ├─ HIT: Return cached embedding                  │
+│      │       └─ MISS: Generate embedding                       │
+│      │           └─ model.encode([text])                        │
+│      └─ Save to both caches                                    │
+│          ├─ Level 1: Hash cache                                 │
+│          └─ Level 2: Semantic cache                            │
 └─────────────┬───────────────────────────────────────────────────┘
               │
               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Save to Caches                                                 │
-│  ├─ Level 1: Hash cache                                         │
-│  └─ Level 2: Semantic cache                                     │
+│  STEP 4: Check Vector DB Again                                  │
+│  └─ Double-check by hash (in case added between checks)        │
+│      ├─ HIT: Skip reinsert (duplicate)                          │
+│      │   └─ Entry remains in feedback_df for analysis         │
+│      └─ MISS: Continue to storage                              │
 └─────────────┬───────────────────────────────────────────────────┘
               │
               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Optional: Add to Vector DB                                     │
-│  └─ Only if:                                                    │
-│      ├─ is_new_embedding = True                                │
-│      ├─ add_to_vector_db = True                                │
-│      └─ It's a feedback entry (not ad-hoc query)               │
+│  STEP 5: Store in Vector DB (if new)                           │
+│  └─ Add with metadata (text, level, timestamp, text_hash)      │
+└─────────────┬───────────────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  STEP 6: Cache the Embedding                                    │
+│  └─ Ensure embedding is in Level 1 cache for reuse            │
 └─────────────────────────────────────────────────────────────────┘
+
+IMPORTANT: This flow is ONLY for embedding generation and vector DB indexing.
+All entries remain in feedback_df and are available for:
+- Statistics and counting
+- Text analysis
+- Filtering and reporting
+- All other agent tools and operations
 ```
 
 ### Query Processing Detailed Flow
@@ -384,11 +411,15 @@ CSV File Loaded
 │                         │  │                         │
 │  Populate Vector DB     │  │  Store to Historical DB │
 │  └─ For each entry:    │  │  └─ For each entry:    │
-│      ├─ Generate       │  │      ├─ Generate       │
-│      │  embedding      │  │      │  text hash      │
-│      ├─ Check if       │  │      ├─ Check if       │
-│      │  exists         │  │      │  hash exists    │
-│      └─ Add if new     │  │      └─ Store if new   │
+│      ├─ (1) Hash check  │  │      ├─ Generate       │
+│      ├─ (2) Check cache │  │      │  text hash      │
+│      ├─ (3) Generate   │  │      ├─ Check if       │
+│      │  embedding      │  │      │  hash exists    │
+│      ├─ (4) Check DB   │  │      └─ Store if new   │
+│      ├─ (5) Store if new│  │                         │
+│      └─ (6) Cache      │  │                         │
+│  Note: All entries     │  │                         │
+│  remain in feedback_df │  │                         │
 │                         │  │                         │
 │  Ready for:            │  │  Ready for:            │
 │  - Semantic search     │  │  - Trend analysis      │

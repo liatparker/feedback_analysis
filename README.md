@@ -124,7 +124,14 @@ Agent: Retrieves historical data for both periods, compares statistics
 
 **Vector DB** (`.chroma_db/`)
 - Stores embeddings for semantic search
-- Updated only when new entries detected
+- Updated using hash-first, cache-first approach:
+  1. Hash check → skip if already indexed
+  2. Check embedding cache → reuse if found
+  3. Generate embedding if not in cache
+  4. Check vector DB → skip if already indexed
+  5. Store if new
+  6. Cache the embedding
+- Note: This flow is only for embedding generation; all entries remain in feedback_df for analysis
 
 **Historical DB** (`.historical_db/`)
 - Stores complete feedback data for trend analysis

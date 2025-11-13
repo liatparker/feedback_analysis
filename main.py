@@ -15,7 +15,6 @@ from tools import (
     compare_feedback_periods,
     get_historical_feedback
 )
-import json
 import pandas as pd
 import os
 
@@ -60,7 +59,6 @@ LLM_PROVIDER = "anthropic"  # Options: "anthropic", "openai"
 
 # Processing options
 VERBOSE = False  # Set to False for clean output (True shows detailed agent execution)
-AUTO_PROCESS = True  # If True, runs automatically. If False, prompts user
 
 # ==============================================
 # END OF CONFIGURATION

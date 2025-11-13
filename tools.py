@@ -12,7 +12,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.cluster import DBSCAN
 import os
 import pickle
-from typing import List, Dict, Tuple, Optional
+from typing import List, Optional
 import chromadb
 from chromadb.config import Settings
 import hashlib
@@ -552,48 +552,7 @@ def _hash_text(text: str, normalized: bool = True) -> str:
         )
     return hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
 
-def _get_embedding_from_cache_or_db(text: str, text_hash: str = None) -> np.ndarray:
-    """
-    Smart embedding retrieval: Check cache first, then vector DB, then generate.
-    This avoids recomputing embeddings by coordinating between cache and vector DB.
-    
-    Args:
-        text: Text to get embedding for
-        text_hash: Optional pre-computed hash (for efficiency)
-    
-    Returns:
-        Embedding vector
-    """
-    if text_hash is None:
-        text_hash = _hash_text(text)
-    
-    cache = _load_embeddings_cache()
-    cache_key = f"text_{text_hash}"
-    
-    # Step 1: Check local cache first (fastest)
-    if cache_key in cache:
-        return cache[cache_key]
-    
-    # Step 2: Try to get from vector DB (if it's a feedback entry)
-    try:
-        _vector_collection = _initialize_vector_db()
-        # Search vector DB by text hash in metadata (if we stored it)
-        # For now, we'll generate and cache it
-        pass
-    except:
-        pass
-    
-    # Step 3: Generate embedding (cache miss and not in vector DB)
-    model = _get_embedding_model()
-    embedding = model.encode([text], show_progress_bar=False, convert_to_numpy=True)
-    
-    # Step 4: Cache it locally for future use
-    cache[cache_key] = embedding
-    _save_embeddings_cache()
-    
-    return embedding
-
-def _generate_embeddings(texts: List[str], cache_key: str = None, use_smart_cache: bool = True, use_semantic_cache: bool = True, add_to_vector_db: bool = False, vector_db_indices: List[int] = None, level_values: List[int] = None) -> np.ndarray:
+def _generate_embeddings(texts: List[str], use_smart_cache: bool = True, use_semantic_cache: bool = True, add_to_vector_db: bool = False, vector_db_indices: List[int] = None, level_values: List[int] = None) -> np.ndarray:
     """
     Generate embeddings for a list of texts with layered caching strategy.
     
@@ -606,7 +565,6 @@ def _generate_embeddings(texts: List[str], cache_key: str = None, use_smart_cach
     
     Args:
         texts: List of text strings to generate embeddings for
-        cache_key: Optional legacy cache key (for backward compatibility)
         use_smart_cache: If True, use text-hash-based caching (default: True)
         use_semantic_cache: If True, use semantic similarity cache (default: True)
         add_to_vector_db: If True, add new embeddings to vector DB (for feedback entries, default: False)
@@ -706,11 +664,7 @@ def _generate_embeddings(texts: List[str], cache_key: str = None, use_smart_cach
         
         return embedding
     
-    # Multiple texts or legacy mode: check legacy cache key first
-    if cache_key and cache_key in cache:
-        return cache[cache_key]
-    
-    # For multiple texts, use batch processing with smart caching
+    # Multiple texts: use batch processing with smart caching
     if use_smart_cache:
         # Check cache for each text individually
         embeddings_list = []
@@ -758,14 +712,8 @@ def _generate_embeddings(texts: List[str], cache_key: str = None, use_smart_cach
         
         return embeddings
     
-    # Legacy mode: generate all at once
+    # Fallback: generate all at once (if smart cache disabled)
     embeddings = model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
-    
-    # Cache if key provided (legacy support)
-    if cache_key:
-        cache[cache_key] = embeddings
-        _save_embeddings_cache()
-    
     return embeddings
 
 def _initialize_vector_db():

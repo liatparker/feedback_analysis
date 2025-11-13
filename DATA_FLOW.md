@@ -23,15 +23,12 @@ initialize_tools(dataframe)
   ↓
 ├─ SHORT-TERM MEMORY: Populate Vector DB
 │   └─ _populate_vector_db()
+│       ├─ Check existing entries in Vector DB
 │       ├─ For each feedback entry:
-│       │   ├─ (1) Hash check → already indexed? Skip embedding & indexing
-│       │   ├─ (2) Check embedding cache → reuse if found
-│       │   ├─ (3) Generate embedding if not in cache
-│       │   ├─ (4) Check vector DB → already indexed? Skip reinsert
-│       │   ├─ (5) Store in vector DB if new (with metadata: text, level, timestamp)
-│       │   └─ (6) Cache the embedding for reuse
+│       │   ├─ Generate embedding (with caching)
+│       │   ├─ Check if already in Vector DB
+│       │   └─ Add if new (with metadata: text, level, timestamp)
 │       └─ Vector DB ready for semantic search
-│       Note: All entries remain in feedback_df for statistics and analysis
   ↓
 └─ LONG-TERM MEMORY: Store to Historical DB
     └─ _store_to_historical_db(dataframe)
@@ -159,41 +156,24 @@ Return embeddings
 
 ## Vector DB Update Flow
 
-### New Entry Processing
+### New Entry Detection
 
 ```
-New CSV loaded (or existing CSV reloaded)
+New CSV loaded with additional entries
   ↓
 _populate_vector_db()
   ↓
-For each feedback entry:
-  ├─ (1) Hash check → has this exact document been seen before?
-  │   └─ Yes → Skip embedding generation & indexing
-  │   └─ No → Continue
-  │
-  ├─ (2) Check embedding cache (Level 1: Hash cache)
-  │   └─ Found → Reuse cached embedding
-  │   └─ Not found → Continue
-  │
-  ├─ (3) Generate embedding if not in cache
-  │   └─ _generate_embeddings() handles semantic cache and generation
-  │
-  ├─ (4) Check vector DB → is this already indexed?
-  │   └─ Yes → Skip reinsert (duplicate)
-  │   └─ No → Continue
-  │
-  ├─ (5) Store in vector DB if new
-  │   └─ Add with metadata (text, level, timestamp, text_hash)
-  │
-  └─ (6) Cache the embedding for reuse
-      └─ Save to Level 1 cache (hash cache)
-
-Note: This flow is ONLY for embedding generation and vector DB indexing.
-All entries remain in feedback_df and are available for:
-- Statistics and counting
-- Text analysis
-- Filtering and reporting
-- All other agent tools and operations
+Check existing count in Vector DB
+  ├─ If count matches: Skip (no new entries)
+  └─ If count differs: Process new entries
+      ↓
+      For each entry:
+      ├─ Check if ID exists in Vector DB
+      ├─ If exists: Skip (duplicate)
+      └─ If new:
+          ├─ Generate embedding (with caching)
+          ├─ Prepare metadata (text, level, timestamp)
+          └─ Add to Vector DB
 ```
 
 ## Historical DB Update Flow

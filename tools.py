@@ -831,24 +831,8 @@ def _add_embedding_to_vector_db(text: str, embedding: np.ndarray, index: int, le
 def _populate_vector_db():
     """
     Populate vector database with feedback embeddings.
-    
-    IMPORTANT: This function ONLY handles embedding generation and vector DB indexing.
-    All entries remain in feedback_df and are available for statistics, analysis, and all other operations.
-    Skipping embedding generation does NOT exclude entries from analysis.
-    
-    Follows exact flow for embedding generation:
-    1. Hash check → has this exact document been seen before? Yes → skip embedding & indexing
-    2. If not, check embedding cache → reuse if found
-    3. If not found in cache → create embedding
-    4. Check vector DB → is this already indexed? Yes → skip reinsert
-    5. If new → store in vector DB
-    6. Cache the embedding (so we can reuse)
-    
-    Note: Entries skipped for embedding are still fully available in feedback_df for:
-    - Statistics and counting
-    - Text analysis
-    - Filtering and reporting
-    - All other agent tools and operations
+    Uses smart caching: checks cache first to avoid recomputing embeddings.
+    Only adds NEW entries (checks Vector DB for duplicates before adding).
     """
     global feedback_df, _vector_collection
     
@@ -876,97 +860,49 @@ def _populate_vector_db():
             level_col = col
             break
     
-    print(f"Processing {total_feedback} feedback entries for vector database...")
-    print(f"   Following hash-first, cache-first approach...")
+    # Check existing entries in Vector DB
+    existing_count = _vector_collection.count()
     
-    # Process each entry following the exact flow
-    added_count = 0
-    skipped_hash = 0
-    skipped_indexed = 0
-    cached_reused = 0
-    
-    for idx, row in non_empty.iterrows():
-        text = str(row[text_col])
+    if existing_count == 0:
+        # Empty DB - populate all entries
+        print(f"Populating vector database with {total_feedback} feedback entries...")
+        print(f"   Using smart caching to avoid recomputing embeddings...")
+        _add_entries_to_vector_db(non_empty, text_col, level_col, timestamp_col, batch_size=100)
+        print(f"Vector database populated with {total_feedback} entries")
+    elif existing_count != total_feedback:
+        # Count mismatch - only add new entries (check for duplicates)
+        print(f"Updating vector database ({existing_count} existing, {total_feedback} total)...")
+        print(f"   Checking for new entries and using smart caching...")
         
-        # (1) Hash check → has this exact document been seen before?
-        # Note: Skipping here only skips embedding generation/DB insertion.
-        # Entry remains in feedback_df and available for all analysis/statistics.
-        text_hash = _hash_text(text, normalized=True)
-        if _check_if_hash_in_vector_db(text_hash):
-            skipped_hash += 1
-            continue  # Skip embedding generation & vector DB indexing only
-        
-        # (2) If not, check embedding cache (optional)
-        # _generate_embeddings() handles this automatically, but we track cache hits
-        cache = _load_embeddings_cache()
-        cache_key = f"text_{text_hash}"
-        embedding = None
-        from_cache = False
-        
-        if cache_key in cache:
-            # Found in cache → reuse the cached embedding
-            embedding = cache[cache_key]
-            from_cache = True
-            cached_reused += 1
-        else:
-            # (3) If not found in cache → create embedding
-            # _generate_embeddings() will handle semantic cache and generation
-            embedding_result = _generate_embeddings([text], use_smart_cache=True, use_semantic_cache=True)
-            embedding = embedding_result[0] if isinstance(embedding_result, np.ndarray) and len(embedding_result.shape) > 1 else embedding_result
-        
-        # (4) Check vector DB → is this embedding (or doc ID) already indexed?
-        # Double-check by hash (in case it was added between hash check and now)
-        # Note: Skipping here only skips vector DB insertion.
-        # Entry remains in feedback_df and available for all analysis/statistics.
-        if _check_if_hash_in_vector_db(text_hash):
-            skipped_indexed += 1
-            continue  # Skip vector DB reinsert (duplicate) only
-        
-        # (5) If new → store in vector DB
-        level_val = None
-        if level_col and level_col in row:
-            try:
-                level_val = int(row[level_col]) if pd.notna(row[level_col]) else None
-            except:
-                level_val = None
-        
-        timestamp_val = None
-        if timestamp_col and timestamp_col in row:
-            timestamp_val = str(row[timestamp_col]) if pd.notna(row[timestamp_col]) else None
-        
+        # Get existing IDs from Vector DB
+        existing_ids = set()
         try:
-            entry_id = f"feedback_{idx}"
-            metadata = {
-                "text": text[:500],
-                "text_hash": text_hash
-            }
-            if level_val is not None:
-                metadata["level"] = str(level_val)
-            if timestamp_val:
-                metadata["timestamp"] = timestamp_val
-            
-            _vector_collection.add(
-                embeddings=[embedding.tolist()],
-                ids=[entry_id],
-                metadatas=[metadata],
-                documents=[text]
-            )
-            added_count += 1
-        except Exception as e:
-            # Silently fail - continue with next entry
+            existing_results = _vector_collection.get(limit=existing_count)
+            if existing_results and existing_results.get('ids'):
+                existing_ids = set(existing_results['ids'])
+        except:
             pass
         
-        # (6) Cache the embedding (so we can reuse) - already done by _generate_embeddings()
-        # But ensure it's in Level 1 cache if we got it from cache
-        if from_cache:
-            cache[cache_key] = embedding
-            _save_embeddings_cache()
-    
-    print(f"Vector database processing complete:")
-    print(f"   - Added: {added_count} new entries")
-    print(f"   - Skipped (hash match): {skipped_hash} entries")
-    print(f"   - Skipped (already indexed): {skipped_indexed} entries")
-    print(f"   - Cache reused: {cached_reused} embeddings")
+        # Find new entries (not in Vector DB)
+        new_entries = []
+        new_indices = []
+        for idx in range(len(non_empty)):
+            entry_id = f"feedback_{idx}"
+            if entry_id not in existing_ids:
+                new_entries.append(non_empty.iloc[idx])
+                new_indices.append(idx)
+        
+        if new_entries:
+            new_df = pd.DataFrame(new_entries).reset_index(drop=True)
+            print(f"   Found {len(new_entries)} new entries to add...")
+            _add_entries_to_vector_db(new_df, text_col, level_col, timestamp_col, 
+                                     start_index=min(new_indices) if new_indices else 0, 
+                                     batch_size=100)
+            print(f"Added {len(new_entries)} new entries to vector database")
+        else:
+            print(f"No new entries to add (all entries already indexed)")
+    else:
+        print(f"Vector database already up to date ({existing_count} entries)")
 
 def _add_entries_to_vector_db(non_empty: pd.DataFrame, text_col: str, level_col: Optional[str], 
                               timestamp_col: Optional[str], start_index: int = 0, batch_size: int = 100):
